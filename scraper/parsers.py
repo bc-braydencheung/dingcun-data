@@ -305,6 +305,89 @@ def ccba(text):
     return out
 
 
+def hsbc(text):
+    """Board time-deposit rates page: one table per currency, first column = lowest tier."""
+    out = []
+    lines = text.splitlines()
+    cur, mn = None, None
+    for i, line in enumerate(lines):
+        cells = [c.strip() for c in line.split("\t")]
+        if cells[0] == "存款期":
+            cur, mn = None, None
+            for cand in [c for c in cells[1:] if c] + [l.strip() for l in lines[i + 1:i + 4]]:
+                m = re.search(r"([\d,]+)\s*(\D+)$", cand) or re.search(r"^(\D+?)\s*([\d,]+)", cand)
+                if m:
+                    a, b = m.groups()
+                    c, n = (currency(b), a) if a[0].isdigit() else (currency(a), b)
+                    if c:
+                        cur, mn = c, int(n.replace(",", ""))
+                        break
+            continue
+        if not cur:
+            continue
+        ten = tenor(cells[0])
+        if ten and len(cells) > 1:
+            v = rate(cells[1])
+            if v:
+                out.append(offer("hsbc", cur, ten, v, min_amount=mn, board=True,
+                                 text="滙豐定期存款牌價（最低存款級別）"))
+    return out
+
+
+def citi(text):
+    """'全新客戶定期存款優惠' table: new customers, new funds, branch / RM only."""
+    out = []
+    note = snippet(text, "以下港元/美元/人民幣定期存款年利率優惠", 400)
+    cur, ten = None, None
+    for cells in rows(text, "貨幣\t全新客戶", "\n\n\n"):
+        if currency(cells[0]):
+            cur, cells = currency(cells[0]), cells[1:]
+        if not cur or len(cells) < 3:
+            continue
+        tier = cells[0].replace(" 客戶", "").strip()
+        vals = [rate(c) for c in cells[1:3]]
+        t = next((tenor(c) for c in cells if tenor(c)), None) or ten
+        ten = t
+        amt = re.findall(r"HK\$([\d,]+)", cells[-1])
+        if not t or not all(vals):
+            continue
+        out.append(offer("citi", cur, t, vals[1], new_customer=True, new_funds=True, tier=tier,
+                         channel="分行／客戶經理（唔適用網上）",
+                         min_amount=int(amt[0].replace(",", "")) if amt else None,
+                         max_amount=int(amt[1].replace(",", "")) if len(amt) > 1 else None,
+                         text=note + "（只做到條款 a 嘅利率；再有 HK$78,000 投資／保險結存可高 0.2%）"))
+    return out
+
+
+def shacom(text):
+    out = []
+    end = None
+    m = re.search(r"由(\d{4})年(\d{1,2})月(\d{1,2})日起", text)
+    mins_branch = {"HKD": 500000, "CNH": 450000, "USD": 65000, "GBP": 50000}
+    mins_online = {"HKD": 1000, "USD": 5000, "CNH": 10000, "GBP": 5000}
+    for start, kw in (("新資金定期存款年利率優惠\n", dict(new_funds=True, channel="分行", mins=mins_branch)),
+                      ("個人網上銀行 / 流動銀行定期存款年利率優惠\n", dict(channel="網上／流動銀行", mins=mins_online))):
+        i = text.rfind(start, 0, text.find("特別優惠條款")) if "特別優惠條款" in text else text.rfind(start)
+        sec = text[i:]
+        tens = None
+        for cells in rows(sec)[:12]:
+            ts = [tenor(c) for c in cells]
+            if sum(1 for t in ts if t) >= 3:
+                tens = ts
+                continue
+            c = currency(cells[0]) if cells else None
+            if tens and c:
+                for t, cell in zip(tens, cells):
+                    v = rate(cell) if t else None
+                    if v:
+                        out.append(offer("shacom", c, t, v, min_amount=kw["mins"].get(c),
+                                         new_funds=kw.get("new_funds", False), channel=kw["channel"],
+                                         text=snippet(sec, "由", 160)))
+            elif tens and out and not c:
+                break
+    return out
+
+
 def headline_only(text):
     return []
 
@@ -319,5 +402,5 @@ PARSERS = {
     "bochk": bochk, "hangseng": hangseng, "sc": sc, "livi": livi,
     "publicbank": publicbank, "antbank": antbank, "paob": paob, "welab": welab,
     "mox": mox, "fubon": fubon, "chbank": chbank, "za": za, "ccba": ccba,
-    "hsbc": headline_only, "dbs": headline_only,
+    "hsbc": hsbc, "citi": citi, "shacom": shacom, "dbs": headline_only,
 }
