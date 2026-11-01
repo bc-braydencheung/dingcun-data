@@ -37,6 +37,9 @@ EXPECT = {
     "chbank": (100, "HKD", 12, None, None),
     "za": (2, "CNH", None, 7, 20.0),
     "ccba": (2, "HKD", 3, None, 7.88),
+    "hsbc": (60, "HKD", 12, None, 0.15),
+    "citi": (5, "USD", 3, None, 3.8),
+    "shacom": (30, "GBP", 12, None, 3.55),
 }
 
 
@@ -89,12 +92,12 @@ def test_validation_rejects_bad():
 
 
 def test_stale_fallback_and_status():
-    bl = [b for b in banks() if b["id"] in ("welab", "mox", "citi", "hsbc")]
-    texts = {"welab": fx("welab"), "mox": fx("mox"), "hsbc": fx("hsbc")}
+    bl = [b for b in banks() if b["id"] in ("welab", "mox", "bea", "dbs")]
+    texts = {"welab": fx("welab"), "mox": fx("mox"), "dbs": fx("dbs")}
     offers, status = build(bl, texts, None, "2026-10-31T08:30:00+08:00")
     st = {s["bank_id"]: s for s in status}
-    assert st["welab"]["status"] == "ok" and st["citi"]["status"] == "unsupported"
-    assert st["hsbc"]["status"] == "headline" and st["hsbc"]["headline_max"]
+    assert st["welab"]["status"] == "ok" and st["bea"]["status"] == "unsupported"
+    assert st["dbs"]["status"] == "headline" and st["dbs"]["headline_max"]
     prev = {"offers": offers, "bank_status": status}
     texts2 = {"welab": RuntimeError("timeout"), "mox": "nothing here"}
     offers2, status2 = build(bl, texts2, prev, "2026-11-01T08:30:00+08:00")
@@ -103,3 +106,24 @@ def test_stale_fallback_and_status():
     assert st2["welab"]["last_ok"] == "2026-10-31T08:30:00+08:00"
     assert all(o["status"] == "stale" for o in offers2)
     assert len(offers2) == len(offers)
+
+
+def test_daily_hibor_overlay():
+    from run import apply_daily_hibor
+    h = {"date": "2026-09-30", "ir_overnight": 4.09, "ir_1m": 3.01, "ir_3m": 3.24}
+    out = apply_daily_hibor(h, [{"end_of_date": "2026-10-30", "hibor_overnight": 2.65, "hibor_fixing_1m": 2.70923}])
+    assert out["date"] == "2026-10-30" and out["ir_overnight"] == 2.65 and out["ir_3m"] == 3.24
+    assert out["terms_date"] == "2026-09-30"
+    assert apply_daily_hibor(h, [{"end_of_date": "2026-09-01", "hibor_overnight": 1, "hibor_fixing_1m": 1}]) == h
+
+
+def test_citi_new_customer_only():
+    o = parsers.citi(fx("citi"))
+    assert all(x["conditions"]["new_customer"] and x["conditions"]["new_funds"] for x in o)
+
+
+def test_promo_end_extraction():
+    from run import promo_end
+    assert promo_end("優惠由2026年10月1日起至2026年12月31日止") == "2026-12-31"
+    assert promo_end("推廣期至2026/11/30") == "2026-11-30"
+    assert promo_end("由2026年10月21日起") is None

@@ -16,6 +16,9 @@ from common import sane
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "..", "data")
 HKT = dt.timezone(dt.timedelta(hours=8))
+HIBOR_DAILY_URL = ("https://api.hkma.gov.hk/public/market-data-and-statistics/"
+                   "daily-monetary-statistics/daily-figures-interbank-liquidity"
+                   "?pagesize=5&sortby=end_of_date&sortorder=desc")
 HIBOR_URL = ("https://api.hkma.gov.hk/public/market-data-and-statistics/"
              "monthly-statistical-bulletin/er-ir/hk-interbank-ir-daily"
              "?pagesize=5&sortby=end_of_day&sortorder=desc")
@@ -79,8 +82,40 @@ def fetch_hibor():
     for rec in recs:
         vals = {k: rec.get(k) for k in ("ir_overnight", "ir_1w", "ir_1m", "ir_3m", "ir_6m", "ir_12m")}
         if all(isinstance(v, (int, float)) for v in vals.values()):
-            return {"date": rec["end_of_day"], **vals, "source": "HKMA"}
+            return merge_daily_hibor({"date": rec["end_of_day"], **vals, "source": "HKMA"})
     raise ValueError("no complete HIBOR record")
+
+
+def merge_daily_hibor(h):
+    """Overlay HKMA daily overnight / 1M fixing when newer than the monthly-bulletin record."""
+    import requests
+    try:
+        r = requests.get(HIBOR_DAILY_URL, timeout=30)
+        r.raise_for_status()
+        recs = r.json()["result"]["records"]
+    except Exception as e:  # monthly data is still valid on its own
+        print("daily HIBOR failed:", e, file=sys.stderr)
+        return h
+    return apply_daily_hibor(h, recs)
+
+
+def apply_daily_hibor(h, recs):
+    for rec in recs:
+        on, m1 = rec.get("hibor_overnight"), rec.get("hibor_fixing_1m")
+        if isinstance(on, (int, float)) and isinstance(m1, (int, float)):
+            if rec["end_of_date"] > h["date"]:
+                return {**h, "terms_date": h["date"], "date": rec["end_of_date"],
+                        "ir_overnight": on, "ir_1m": m1}
+            break
+    return h
+
+
+def promo_end(text):
+    """Latest '至2026年12月31日' / '至2026-12-31' style end date in the condition text."""
+    import re
+    ds = [f"{y}-{int(m):02d}-{int(d):02d}" for y, m, d in
+          re.findall(r"(?:至|截至|到)\s*(20\d\d)\s*[年/-]\s*(\d{1,2})\s*[月/-]\s*(\d{1,2})", text)]
+    return max(ds) if ds else None
 
 
 def build(bank_list, texts, previous, fetched_at):
@@ -115,7 +150,7 @@ def build(bank_list, texts, previous, fetched_at):
                     err = f"rejected {len(bad)} invalid offers"
             except Exception as e:  # noqa: BLE001
                 err = f"parse: {type(e).__name__}: {e}"
-        if b["parser"] in ("hsbc", "dbs"):
+        if parsers.PARSERS[b["parser"]] is parsers.headline_only:
             st.update(status="headline", error="網頁只寫「高達」利率，冇分年期表")
             status.append(st)
             continue
@@ -125,7 +160,7 @@ def build(bank_list, texts, previous, fetched_at):
                 o["source_url"] = b["url"]
                 o["fetched_at"] = fetched_at
                 o["status"] = "ok"
-                o.setdefault("promo_end", None)
+                o["promo_end"] = o.get("promo_end") or promo_end(o.get("conditions_text_zh") or "")
             offers += got
             st.update(status="ok", offer_count=len(got), last_ok=fetched_at, error=err)
         elif prev_offers.get(bid):
