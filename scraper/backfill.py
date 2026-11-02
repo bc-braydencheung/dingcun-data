@@ -20,7 +20,7 @@ HIBOR = ("https://api.hkma.gov.hk/public/market-data-and-statistics/monthly-stat
 def snapshots(url, since):
     import json, subprocess, urllib.parse
     q = urllib.parse.urlencode({"url": url, "from": since.replace("-", ""), "output": "json",
-                                "fl": "timestamp", "filter": "statuscode:200", "collapse": "timestamp:6"})
+                                "fl": "timestamp", "filter": "statuscode:200", "collapse": "timestamp:8"})
     for attempt in range(3):
         try:
             r = subprocess.run(["curl", "-s", "--max-time", "60", f"{CDX}?{q}"], capture_output=True, timeout=70)
@@ -82,17 +82,46 @@ def hibor_on(series, day):
     return series[max(ks)] if ks else None
 
 
+def render_live(url, ts):
+    """Open the archived page in a real browser so its own JS (tables loaded by XHR) runs."""
+    from playwright.sync_api import sync_playwright
+    for attempt in range(3):
+        with sync_playwright() as p:
+            b = p.chromium.launch()
+            pg = b.new_page(locale="zh-HK")
+            pg.route("**/*", lambda r: r.abort() if r.request.resource_type in ("image", "font", "media") else r.continue_())
+            try:
+                pg.goto(f"https://web.archive.org/web/{ts}/{url}", timeout=90000, wait_until="domcontentloaded")
+                try:
+                    pg.wait_for_load_state("networkidle", timeout=20000)
+                except Exception:
+                    pass
+                pg.wait_for_timeout(4000)
+                text = pg.inner_text("body")
+                if len(text) > 800:
+                    return text
+            except Exception:
+                pass
+            finally:
+                b.close()
+        time.sleep(10 * (attempt + 1))
+    return ""
+
+
+def parse(b, text):
+    try:
+        return [o for o in parsers.PARSERS[b["parser"]](text) if sane(o)]
+    except Exception:
+        return []
+
+
 def one_bank(b, since):
     got = {}
     for ts in snapshots(b["url"], since):
-        html = fetch(b["url"], ts)
-        if not html:
-            continue
-        text = render(html)
-        try:
-            offers = [o for o in parsers.PARSERS[b["parser"]](text) if sane(o)]
-        except Exception:
-            offers = []
+        offers = parse(b, render_live(b["url"], ts))
+        if not offers:
+            html = fetch(b["url"], ts)
+            offers = parse(b, render(html)) if html else []
         day = f"{ts[:4]}-{ts[4:6]}-{ts[6:8]}"
         print(b["id"], day, len(offers), flush=True)
         if offers:
@@ -109,7 +138,7 @@ def main():
     bl = [b for b in banks() if b["parser"] and parsers.PARSERS[b["parser"]] is not parsers.headline_only
           and (not wanted or b["id"] in wanted)]
     series = hibor_series()
-    with ThreadPoolExecutor(4) as ex:
+    with ThreadPoolExecutor(3) as ex:
         results = list(ex.map(lambda b: one_bank(b, a.since), bl))
     os.makedirs(HIST, exist_ok=True)
     days = {}

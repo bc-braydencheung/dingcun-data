@@ -40,6 +40,8 @@ EXPECT = {
     "hsbc": (60, "HKD", 12, None, 0.15),
     "citi": (5, "USD", 3, None, 3.8),
     "shacom": (30, "GBP", 12, None, 3.55),
+    "icbcasia": (100, "HKD", 3, None, 3.00),
+    "bea": (80, "HKD", 12, None, 0.15),
 }
 
 
@@ -62,7 +64,11 @@ def test_condition_flags():
     za = parsers.za(fx("za"))
     assert all(o["conditions"]["fx_conversion"] for o in za)
     cc = parsers.ccba(fx("ccba"))
-    assert all(o["conditions"]["new_customer"] and o["conditions"]["up_to"] for o in cc)
+    vip = [o for o in cc if o["conditions"]["up_to"]]
+    assert vip and all(o["conditions"]["new_customer"] for o in vip)
+    assert 8.88 in [o["rate_pa"] for o in find(vip, "USD", 3)]
+    online = find(cc, "USD", 3, up_to=False)
+    assert online[0]["rate_pa"] == 4.05 and online[0]["min_amount"] == 100000
     ant = parsers.antbank(fx("antbank"))
     assert find(ant, "HKD", 3, None, new_funds=False) and find(ant, "HKD", 3, None, new_funds=True)
 
@@ -92,11 +98,11 @@ def test_validation_rejects_bad():
 
 
 def test_stale_fallback_and_status():
-    bl = [b for b in banks() if b["id"] in ("welab", "mox", "bea", "dbs")]
+    bl = [b for b in banks() if b["id"] in ("welab", "mox", "dahsing", "dbs")]
     texts = {"welab": fx("welab"), "mox": fx("mox"), "dbs": fx("dbs")}
     offers, status = build(bl, texts, None, "2026-10-31T08:30:00+08:00")
     st = {s["bank_id"]: s for s in status}
-    assert st["welab"]["status"] == "ok" and st["bea"]["status"] == "unsupported"
+    assert st["welab"]["status"] == "ok" and st["dahsing"]["status"] == "unsupported"
     assert st["dbs"]["status"] == "headline" and st["dbs"]["headline_max"]
     prev = {"offers": offers, "bank_status": status}
     texts2 = {"welab": RuntimeError("timeout"), "mox": "nothing here"}
@@ -127,3 +133,38 @@ def test_promo_end_extraction():
     assert promo_end("優惠由2026年10月1日起至2026年12月31日止") == "2026-12-31"
     assert promo_end("推廣期至2026/11/30") == "2026-11-30"
     assert promo_end("由2026年10月21日起") is None
+
+
+def test_icbcasia_tiers_and_promos():
+    ic = parsers.icbcasia(fx("icbcasia"))
+    usd = find(ic, "USD", 1, tier="工銀財富／理財金")
+    assert sorted(o["rate_pa"] for o in usd) == [3.10, 3.20]
+    assert find(ic, "HKD", 1, tier="工銀財富")[0]["rate_pa"] == 1.70
+    d98 = find(ic, "USD", None, 98, tier="工銀財富")
+    assert d98[0]["rate_pa"] == 4.10 and d98[0]["conditions"]["new_funds"]
+    nc = find(ic, "HKD", 3, new_customer=True)
+    assert nc[0]["rate_pa"] == 6.00 and nc[0]["max_amount"] == 200000 and nc[0]["min_amount"] == 10000
+    assert "2026年10月31日" in nc[0]["conditions_text_zh"]
+
+
+def test_bea_board_both_pages():
+    b = parsers.bea(fx("bea"))
+    assert all(o["conditions"]["board"] for o in b)
+    assert find(b, "USD", 12)[0]["rate_pa"] == 0.225
+    assert {o["min_amount"] for o in find(b, "HKD", 3)} == {400000, 50000, 30000, 1000}
+
+
+def test_join_pages_keeps_main_failure():
+    from run import join_pages
+    e = RuntimeError("x")
+    assert join_pages(e, ["a"]) is e
+    assert parsers.PAGE_SEP in join_pages("main", ["extra", e])
+
+
+def test_parse_hkab():
+    from run import parse_hkab
+    j = {"Overnight": 2.45048, "1 Week": 2.47512, "2 Weeks": 2.53101, "1 Month": 2.6775,
+         "2 Months": 3.04786, "3 Months": 3.20548, "6 Months": 3.43411, "12 Months": 3.91964,
+         "year": 2026, "month": 11, "day": 2, "date": "2026-11-2", "time": "11:15am", "isHoliday": False}
+    h = parse_hkab(j)
+    assert h["date"] == "2026-11-02" and h["ir_3m"] == 3.20548 and h["source"] == "HKAB"
