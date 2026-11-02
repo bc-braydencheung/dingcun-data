@@ -294,6 +294,13 @@ def pages(text):
     return [t for t in text.split(PAGE_SEP)]
 
 
+def on_page(offers, i):
+    """Remember which fetched page (0 = main URL, n = n-th extra URL) an offer came from."""
+    for o in offers:
+        o["page"] = i
+    return offers
+
+
 def ccba(text):
     out = []
     main, *extra = pages(text)
@@ -315,7 +322,7 @@ def ccba(text):
                         out.append(offer("ccba", c, ten, v, new_customer=True, new_funds=True,
                                          tier=nc_tier, channel=ch, up_to=True, text=note))
                 curs = []
-    for page in extra:
+    for pi, page in enumerate(extra, 1):
         # 網上新資金定存優惠: confirmed rates with minimum amounts
         toks = tokens(page, "年利率*", "以上新資金年利率")
         head = re.sub(r"\s+", "", snippet(page, "由20", 120))
@@ -329,8 +336,8 @@ def ccba(text):
             elif tenor(t):
                 ten = tenor(t)
             elif cur and ten and rate(t):
-                out.append(offer("ccba", cur, ten, rate(t), min_amount=mn, new_funds=True,
-                                 channel="網上／手機銀行", text=note))
+                out += on_page([offer("ccba", cur, ten, rate(t), min_amount=mn, new_funds=True,
+                                      channel="網上／手機銀行", text=note)], pi)
                 cur = None
     return out
 
@@ -338,7 +345,7 @@ def ccba(text):
 def icbcasia(text):
     """ICBC (Asia) promo pages: online TD table (by customer class) + new-funds branch promos."""
     out = []
-    for page in pages(text):
+    for pi, page in enumerate(pages(text)):
         new_customer = "全新客戶" in page[:3000] and "全新客戶港幣新資金" in page
         branch = "到分行" in page
         intro = snippet(page, "客戶於推廣期內", 200) or snippet(page, "全新客戶於推廣期內", 200) \
@@ -391,16 +398,17 @@ def icbcasia(text):
             if not cur:
                 continue
             for ten, cell in zip(tenors, cells[-n:]):
-                out.append(offer("icbcasia", cur, ten, rate(cell), min_amount=mn, max_amount=mx,
-                                 new_customer=new_customer, new_funds="新資金" in page[:1500] and branch,
-                                 tier=row_tier, channel="分行" if branch else "網上／手機銀行", text=note))
+                out += on_page([offer("icbcasia", cur, ten, rate(cell), min_amount=mn, max_amount=mx,
+                                      new_customer=new_customer, new_funds="新資金" in page[:1500] and branch,
+                                      tier=row_tier, channel="分行" if branch else "網上／手機銀行",
+                                      text=note)], pi)
     return out
 
 
 def bea(text):
     """BEA board rates (港元 + 外幣 pages): per-currency tables, first column = minimum amount."""
     out = []
-    for page in pages(text):
+    for pi, page in enumerate(pages(text)):
         tenors, cur = None, None
         for line in page.splitlines():
             cells = [c.strip() for c in line.split("\t") if c.strip()]
@@ -427,7 +435,7 @@ def bea(text):
             for ten, cell in zip(tenors, cells[1:]):
                 v = rate(cell)
                 if ten and v:
-                    out.append(offer("bea", cur, ten, v, min_amount=mn, board=True, text="牌價"))
+                    out += on_page([offer("bea", cur, ten, v, min_amount=mn, board=True, text="牌價")], pi)
     return out
 
 
