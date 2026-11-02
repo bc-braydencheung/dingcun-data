@@ -38,8 +38,18 @@ def fetch_static(url):
     return BeautifulSoup(r.content, "lxml").get_text("\n")
 
 
-def fetch_browser(urls):
-    """Render pages with Playwright; returns {url: text or Exception}."""
+REVEAL_JS = """() => document.querySelectorAll('table').forEach(t => {
+  for (let e = t; e && e !== document.body; e = e.parentElement) {
+    const cs = getComputedStyle(e);
+    if (cs.display === 'none') e.style.setProperty('display', 'block', 'important');
+    if (cs.visibility === 'hidden') e.style.setProperty('visibility', 'visible', 'important');
+  }
+})"""
+
+
+def fetch_browser(urls, reveal=()):
+    """Render pages with Playwright; returns {url: text or Exception}.
+    URLs in `reveal` keep their rate tables in closed pop-ups: un-hide them before reading."""
     import asyncio
     from playwright.async_api import async_playwright
 
@@ -55,6 +65,8 @@ def fetch_browser(urls):
                     except Exception:
                         pass
                     await page.wait_for_timeout(3000 + 4000 * attempt)
+                    if url in reveal:
+                        await page.evaluate(REVEAL_JS)
                     out[url] = await page.inner_text("body")
                 except Exception as e:  # noqa: BLE001
                     out[url] = e
@@ -210,6 +222,10 @@ def build(bank_list, texts, previous, fetched_at):
             st.update(status="ok", offer_count=0, last_ok=fetched_at, error="所有推廣已過截止日")
             status.append(st)
             continue
+        prev_live = [o for o in prev_offers.get(bid, []) if live(o)]
+        if got and len(got) < 0.3 * len(prev_live):
+            err = f"只抽到 {len(got)} 條（上次 {len(prev_live)} 條），當網頁未載完"
+            got = []
         if got:
             for i, o in enumerate(got):
                 o["id"] = f"{bid}-{i}"
@@ -225,6 +241,35 @@ def build(bank_list, texts, previous, fetched_at):
             st.update(status="error", error=err or "0 offers parsed")
         status.append(st)
     return offers, status
+
+
+STALE_ALERT_HOURS = 72
+
+
+def health(status, offers, hibor, previous, fetched_at):
+    """Summary for data/health.json; non-empty `alerts` makes the workflow fail so GitHub emails the owner."""
+    from datetime import datetime
+    now = datetime.fromisoformat(fetched_at)
+    alerts = []
+    for s in status:
+        if s["status"] in ("stale", "error"):
+            last = s.get("last_ok")
+            hours = (now - datetime.fromisoformat(last)).total_seconds() / 3600 if last else None
+            if hours is None or hours > STALE_ALERT_HOURS:
+                since = f"{last[:10]} 之後" if last else "從來"
+                alerts.append(f"{s['bank_id']} {since}冇抓到（{s.get('error') or s['status']}）")
+    before = len((previous or {}).get("offers", []))
+    if before and len(offers) < before * 0.7:
+        alerts.append(f"利率數目由 {before} 跌到 {len(offers)}")
+    hd = (hibor or {}).get("date")
+    if not hd or (now.date() - datetime.fromisoformat(hd).date()).days > 5:
+        alerts.append(f"HIBOR 停咗喺 {hd}")
+    count = lambda k: sum(1 for s in status if s["status"] == k)  # noqa: E731
+    return {"generated_at": fetched_at, "offers": len(offers), "ok": count("ok"), "stale": count("stale"),
+            "error": count("error"), "headline": count("headline"), "unsupported": count("unsupported"),
+            "hibor_date": hd, "alerts": alerts,
+            "problems": [{k: s.get(k) for k in ("bank_id", "status", "last_ok", "error")}
+                         for s in status if s["status"] in ("stale", "error")]}
 
 
 def main():
@@ -245,7 +290,7 @@ def main():
     else:
         live = [b for b in bl if b["parser"]]
         br = [u for b in live if b["method"] == "browser" for u in [b["url"], *b["extra"]]]
-        got = fetch_browser(br)
+        got = fetch_browser(br, {u for b in live if b.get("reveal") for u in [b["url"], *b["extra"]]})
         for b in live:
             for u in [b["url"], *b["extra"]]:
                 if b["method"] == "static":
@@ -266,6 +311,8 @@ def main():
     os.makedirs(os.path.join(a.out, "history"), exist_ok=True)
     with open(rates_path, "w", encoding="utf-8") as f:
         json.dump(doc, f, ensure_ascii=False, indent=1)
+    with open(os.path.join(a.out, "health.json"), "w", encoding="utf-8") as f:
+        json.dump(health(status, offers, hibor, previous, fetched_at), f, ensure_ascii=False, indent=1)
     day = fetched_at[:10]
     hist = {"date": day, "hibor": hibor, "offers": [
         [o["bank_id"], o["currency"], o["tenor_months"], o["tenor_days"], o["rate_pa"],

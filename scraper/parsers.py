@@ -522,6 +522,141 @@ def shacom(text):
     return out
 
 
+def dbs(text):
+    """星展: registration 3-month new-funds promo + 網上定存優惠 table (default tab 港幣／新資金)."""
+    out = []
+    for pi, page in enumerate(pages(text)):
+        page = page.replace("\u200b", "")
+        if "網上定存優惠" not in page:
+            continue
+        lines = [l for l in page.splitlines()]
+        reg = snippet(page, "成功以合資格新資金開立", 80)
+        heads = None
+        for i, line in enumerate(lines):
+            cells = [c.strip() for c in line.split("\t") if c.strip()]
+            if cells[:2] == ["港元", "美元"]:
+                heads = ["HKD", "USD"]
+                continue
+            if heads and cells and tenor(cells[0]) and len(cells) == 3:
+                for cur, cell, mn in zip(heads, cells[1:], (500000, 65000)):
+                    if rate(cell):
+                        out += on_page([offer("dbs", cur, tenor(cells[0]), rate(cell), min_amount=mn,
+                                              new_funds=True, channel="網上登記", text="網上登記後" + reg)], pi)
+                heads = None
+                continue
+            if cells and cells[0] == "存款期" and "優惠編號" in cells:
+                m = re.search(r"存款額：港幣([\d,]+)", page)
+                mn = amount(m.group(1)) if m else None
+                for row in lines[i + 1:]:
+                    rc = [c.strip() for c in row.split("\t") if c.strip()]
+                    if len(rc) < 5 or not tenor(rc[0]):
+                        break
+                    ten = tenor(rc[0])
+                    note = "網上定存優惠（新資金），網上／手機銀行開立"
+                    out += on_page([offer("dbs", "HKD", ten, rate(rc[1]), min_amount=mn, new_funds=True,
+                                          channel="網上／手機銀行", text=note)], pi)
+                    if rate(rc[3]) != rate(rc[1]):
+                        out += on_page([offer("dbs", "HKD", ten, rate(rc[3]), min_amount=mn, new_funds=True,
+                                              tier="星展豐盛理財／私人客戶", channel="網上／手機銀行",
+                                              text=note)], pi)
+                break
+    return out
+
+
+HKD_PER_USD = 7.75  # peg strong side: the USD figure needed to reach an HKD-equivalent threshold
+
+
+def _hkd_band(label):
+    nums = [int(x.replace(",", "")) for x in re.findall(r"\d[\d,]{3,}", label)]
+    if not nums:
+        return None, None
+    if "或以上" in label or len(nums) == 1:
+        return nums[0], None
+    return nums[0], nums[1] - 1 if "以下" in label else nums[1]
+
+
+def dahsing(text):
+    """大新 高息定存 promo pages: tables banded by HKD-equivalent amount, VIP / 其他客戶."""
+    out = []
+    for pi, page in enumerate(pages(text)):
+        title = page[:900]
+        cur = "USD" if "美元定期存款" in title else "HKD" if "港元定期存款" in title else None
+        if not cur:
+            continue
+        period = snippet(page, "推廣期由", 40)
+        tenors, tier, fx = None, None, False
+        for line in page.splitlines():
+            cells = [c.strip() for c in line.split("\t") if c.strip()]
+            if not cells:
+                continue
+            if cells[0].startswith("VIP"):
+                tier, fx = "VIP 銀行服務", False
+            elif cells[0].startswith("其他") and "客戶" in cells[0]:
+                tier, fx = None, False
+            elif "兌換及定期存款優惠" in cells[0]:
+                tier, fx = None, True
+            elif all(tenor(c) for c in cells):
+                tenors = [tenor(c) for c in cells]
+            elif tenors and len(cells) == len(tenors) + 1 and re.search(r"\d,\d{3}", cells[0]):
+                lo, hi = _hkd_band(cells[0])
+                if cur == "USD":
+                    lo = lo and -(-lo // HKD_PER_USD)
+                    hi = hi and int(hi // HKD_PER_USD)
+                note = (f"分行以全新資金開立；存款金額以港元等值計：{cells[0]}" if not fx
+                        else f"分行以港元兌換{('美元' if cur == 'USD' else '')}同時開立；金額以港元計：{cells[0]}")
+                for ten, cell in zip(tenors, cells[1:]):
+                    v = rate(cell)
+                    if v:
+                        out += on_page([offer("dahsing", cur, ten, v, min_amount=lo and int(lo), max_amount=hi,
+                                              new_funds=not fx, fx_conversion=fx, tier=tier, channel="分行",
+                                              text=f"{note}。{period}")], pi)
+            elif tenors and not re.search(r"\d", cells[0]):
+                tenors = None if "上述年利率" in cells[0] else tenors
+    return out
+
+
+def chiyu(text):
+    """集友 存款利率 page (港元 default): 定期 board table, columns = amount bands."""
+    out = []
+    bands = None
+    for line in text[text.find("港元定期存款利率表"):].splitlines():
+        cells = [c.strip() for c in line.split("\t") if c.strip()]
+        if cells and cells[0] == "存款金額":
+            bands = [_hkd_band(c) if "以下" not in c or re.search(r"\d.*至|-", c) else (None, amount(c) - 1)
+                     for c in cells[1:]]
+            continue
+        if bands and cells and tenor(cells[0]) and len(cells) == len(bands) + 1:
+            for (lo, hi), cell in zip(bands, cells[1:]):
+                v = rate(cell)
+                if v:
+                    out.append(offer("chiyu", "HKD", tenor(cells[0]), v, min_amount=lo, max_amount=hi,
+                                     board=True, text="分行牌價"))
+        elif bands and cells and not tenor(cells[0]):
+            break
+    return out
+
+
+def airstar(text):
+    """天星: the deposit page loads /vendor/json/deposit_rate.json; offers link to the page itself."""
+    import json
+    out = []
+    for page in pages(text)[1:]:
+        try:
+            data = json.loads(page.strip())
+        except ValueError:
+            continue
+        for x in data:
+            if x.get("rate_type") != "Time Deposit Rate":
+                continue
+            cur = currency(x["currency"]["code"])
+            for t in x.get("tenors", []):
+                ten, v = tenor(t["zh"].replace(" ", "")), rate(t["rate"])
+                if cur and ten and v:
+                    out.append(offer("airstar", cur, ten, v, board=True, channel="App",
+                                     text="天星銀行 App 定期存款標準利率；1,000 起存（多幣種適用）"))
+    return out
+
+
 def headline_only(text):
     return []
 
@@ -536,6 +671,6 @@ PARSERS = {
     "bochk": bochk, "hangseng": hangseng, "sc": sc, "livi": livi,
     "publicbank": publicbank, "antbank": antbank, "paob": paob, "welab": welab,
     "mox": mox, "fubon": fubon, "chbank": chbank, "za": za, "ccba": ccba,
-    "hsbc": hsbc, "citi": citi, "shacom": shacom, "dbs": headline_only,
+    "hsbc": hsbc, "citi": citi, "shacom": shacom, "dbs": dbs, "dahsing": dahsing, "chiyu": chiyu, "airstar": airstar,
     "icbcasia": icbcasia, "bea": bea,
 }

@@ -42,6 +42,10 @@ EXPECT = {
     "shacom": (30, "GBP", 12, None, 3.55),
     "icbcasia": (100, "HKD", 3, None, 3.00),
     "bea": (80, "HKD", 12, None, 0.15),
+    "dbs": (8, "HKD", 3, None, 2.80),
+    "dahsing": (30, "USD", 6, None, 4.1),
+    "chiyu": (40, "HKD", 60, None, 0.25),
+    "airstar": (20, "USD", 12, None, 4.2),
 }
 
 
@@ -98,12 +102,12 @@ def test_validation_rejects_bad():
 
 
 def test_stale_fallback_and_status():
-    bl = [b for b in banks() if b["id"] in ("welab", "mox", "dahsing", "dbs")]
+    bl = [b for b in banks() if b["id"] in ("welab", "mox", "cncbi", "dbs")]
     texts = {"welab": fx("welab"), "mox": fx("mox"), "dbs": fx("dbs")}
     offers, status = build(bl, texts, None, "2026-10-31T08:30:00+08:00")
     st = {s["bank_id"]: s for s in status}
-    assert st["welab"]["status"] == "ok" and st["dahsing"]["status"] == "unsupported"
-    assert st["dbs"]["status"] == "headline" and st["dbs"]["headline_max"]
+    assert st["welab"]["status"] == "ok" and st["cncbi"]["status"] == "unsupported"
+    assert st["dbs"]["status"] == "ok" and st["dbs"]["headline_max"]
     prev = {"offers": offers, "bank_status": status}
     texts2 = {"welab": RuntimeError("timeout"), "mox": "nothing here"}
     offers2, status2 = build(bl, texts2, prev, "2026-11-01T08:30:00+08:00")
@@ -191,3 +195,69 @@ def test_failed_extra_page_keeps_slot():
     from run import join_pages
     j = join_pages("main", [RuntimeError("x"), "second"])
     assert parsers.pages(j)[2].strip() == "second"
+
+
+def test_dbs_promo_conditions():
+    got = parsers.dbs(fx("dbs"))
+    reg = find(got, "USD", 3, None, new_funds=True)
+    assert [o["rate_pa"] for o in reg] == [4.3] and reg[0]["min_amount"] == 65000
+    assert all(o["page"] == 1 for o in got)
+
+
+def test_dahsing_bands_and_fx():
+    got = parsers.dahsing(fx("dahsing"))
+    vip = [o for o in got if o["conditions"]["tier"] == "VIP 銀行服務" and o["tenor_months"] == 6
+           and o["currency"] == "USD"]
+    assert {o["rate_pa"] for o in vip} == {3.9, 4.0, 4.1}
+    top = [o for o in vip if o["max_amount"] is None][0]
+    assert top["min_amount"] == 645162 and top["conditions"]["channel"] == "分行"
+    conv = [o for o in got if o["conditions"]["fx_conversion"]]
+    assert conv and all(not o["conditions"]["new_funds"] for o in conv)
+    hkd6 = {(o["conditions"]["tier"], o["min_amount"]): o["rate_pa"] for o in got
+            if o["currency"] == "HKD" and o["tenor_months"] == 6}
+    assert hkd6[("VIP 銀行服務", 200000)] == 3.2 and hkd6[(None, 1000000)] == 3.1
+    assert all(o["page"] == 1 for o in got if o["currency"] == "HKD")
+
+
+def test_chiyu_amount_columns():
+    got = parsers.chiyu(fx("chiyu"))
+    three = find(got, "HKD", 3)
+    assert [(o["min_amount"], o["max_amount"]) for o in three] == [(None, 99999), (100000, 499999), (500000, None)]
+    assert all(o["conditions"]["board"] for o in got)
+
+
+def test_airstar_only_time_deposits():
+    got = parsers.airstar(fx("airstar"))
+    assert {o["currency"] for o in got} == {"HKD", "USD", "CNH"}
+    assert find(got, "HKD", None, 7)[0]["rate_pa"] == 0.01
+    assert "page" not in got[0]
+
+
+def test_health_alerts():
+    from run import health
+    prev = {"offers": [{}] * 100, "hibor": {"date": "2026-11-01"}}
+    st = [{"bank_id": "a", "status": "ok", "last_ok": "2026-11-02T08:40:00+08:00", "error": None},
+          {"bank_id": "b", "status": "stale", "last_ok": "2026-10-29T08:40:00+08:00", "error": "timeout"},
+          {"bank_id": "c", "status": "stale", "last_ok": "2026-11-01T17:40:00+08:00", "error": "timeout"},
+          {"bank_id": "d", "status": "unsupported", "last_ok": None, "error": None}]
+    h = health(st, [{}] * 60, {"date": "2026-10-20"}, prev, "2026-11-02T08:40:00+08:00")
+    text = " ".join(h["alerts"])
+    assert "b" in text and " c " not in f" {text} " and "60" in text and "HIBOR" in text
+    assert h["ok"] == 1 and h["stale"] == 2
+    assert health(st[:1], [{}] * 100, {"date": "2026-11-02"}, prev, "2026-11-02T08:40:00+08:00")["alerts"] == []
+
+
+def test_big_shrink_keeps_previous_as_stale():
+    bl = [b for b in banks() if b["id"] == "fubon"]
+    offers, status = build(bl, {"fubon": fx("fubon")}, None, "2026-11-01T08:40:00+08:00")
+    assert len(offers) >= 50
+    few = "\n".join(fx("fubon").splitlines()[:0]) or "nothing"
+    short = [dict(o) for o in offers[:4]]
+    import parsers as P
+    orig = P.PARSERS["fubon"]
+    P.PARSERS["fubon"] = lambda t: [dict(o, conditions=dict(o["conditions"])) for o in short]
+    try:
+        o2, s2 = build(bl, {"fubon": few}, {"offers": offers, "bank_status": status}, "2026-11-02T08:40:00+08:00")
+    finally:
+        P.PARSERS["fubon"] = orig
+    assert s2[0]["status"] == "stale" and "只抽到 4 條" in s2[0]["error"] and len(o2) == len(offers)
