@@ -1,7 +1,7 @@
 """Per-bank parsers. Each takes page text and returns a list of offers."""
 import re
 
-from common import (amount, currency, offer, rate, rows, snippet, tenor,
+from common import (CURRENCIES, amount, currency, offer, rate, rows, snippet, tenor,
                     tokens)
 
 
@@ -287,21 +287,147 @@ def za(text):
     return out
 
 
+PAGE_SEP = "=====PAGE====="
+
+
+def pages(text):
+    return [t for t in text.split(PAGE_SEP)]
+
+
 def ccba(text):
     out = []
+    main, *extra = pages(text)
     for start, nc_tier, ch in (("全新「貴賓理財」客戶定期存款推廣", "貴賓理財（全新客戶）", "分行"),
                                ("全新「智選理財」及一般個人銀行客戶定期存款推廣", None, "e賬戶服務")):
-        toks = tokens(text, start, "了解更多")
+        toks = tokens(main, start, "了解更多")
         note = " ".join(toks[:2])[:220]
+        curs, ten = [], None
         for i, t in enumerate(toks):
-            if "港元" in t and i + 3 < len(toks):
-                ten = tenor(toks[i + 1])
-                v = rate(toks[i + 3]) if toks[i + 2] == "高達" else None
-                if ten and v:
-                    for c in ("HKD", "CNH"):
+            cs = [currency(x) for x in t.split("/") if currency(x)]
+            if cs:
+                curs += cs
+            elif tenor(t):
+                ten = tenor(t)
+            elif t == "高達" and i + 1 < len(toks) and ten and curs:
+                v = rate(toks[i + 1])
+                if v:
+                    for c in curs:
                         out.append(offer("ccba", c, ten, v, new_customer=True, new_funds=True,
                                          tier=nc_tier, channel=ch, up_to=True, text=note))
-                break
+                curs = []
+    for page in extra:
+        # 網上新資金定存優惠: confirmed rates with minimum amounts
+        toks = tokens(page, "年利率*", "以上新資金年利率")
+        head = re.sub(r"\s+", "", snippet(page, "由20", 120))
+        note = (head.split("，")[0] + "，經手機銀行／網上銀行／智慧櫃員機以新資金開立").strip()
+        cur, mn, ten = None, None, None
+        for t in toks:
+            if currency(t):
+                cur, mn = currency(t), None
+            elif cur and mn is None and re.search(r"\d", t) and "或以上" in t:
+                mn = amount(t)
+            elif tenor(t):
+                ten = tenor(t)
+            elif cur and ten and rate(t):
+                out.append(offer("ccba", cur, ten, rate(t), min_amount=mn, new_funds=True,
+                                 channel="網上／手機銀行", text=note))
+                cur = None
+    return out
+
+
+def icbcasia(text):
+    """ICBC (Asia) promo pages: online TD table (by customer class) + new-funds branch promos."""
+    out = []
+    for page in pages(text):
+        new_customer = "全新客戶" in page[:3000] and "全新客戶港幣新資金" in page
+        branch = "到分行" in page
+        intro = snippet(page, "客戶於推廣期內", 200) or snippet(page, "全新客戶於推廣期內", 200) \
+            or snippet(page, "個人客戶於辦公時間", 200)
+        period = snippet(page, "推廣期：", 40)
+        note = (intro + (" " + period if period else "")).strip()
+        tenors, cur, tier, pending, cat = [], None, None, "", None
+        for line in page.splitlines():
+            cells = [c.strip() for c in line.split("\t") if c.strip()]
+            if not cells:
+                continue
+            if cells[0] in ("工銀財富／理財金客戶", "e時代／綜合客戶") and len(cells) == 1:
+                tier = "工銀財富／理財金" if cells[0].startswith("工銀") else None
+                continue
+            ts = [tenor(c) for c in cells if tenor(c)]
+            if ts and len(ts) >= len(cells) - 2:
+                tenors, cur, pending, cat = ts, None, "", tier
+                continue
+            if not tenors:
+                continue
+            n = 0
+            while n < len(cells) and re.fullmatch(r"\d{1,2}\.\d+%", cells[-1 - n]):
+                n += 1
+            if n != len(tenors):
+                pending = (pending + " " + " ".join(cells)).strip() if len(cells) <= 2 else ""
+                continue
+            label = (pending + " " + " ".join(cells[:-n])).strip()
+            pending = ""
+            for k, c in CURRENCIES.items():
+                if k in label and len(k) > 1:
+                    cur = c
+                    break
+            if "只適用於工銀財富客戶" in label:
+                pass
+            elif "工銀財富客戶" in label and "／" not in label.split("工銀財富客戶")[0][-3:]:
+                cat = "工銀財富"
+            elif "工銀財富／理財金客戶" in label:
+                cat = "工銀財富／理財金"
+            elif "零售銀行個人客戶" in label:
+                cat = None
+            row_tier = "工銀財富" if "只適用於工銀財富客戶" in label else cat
+            nums = [int(x.replace(",", "")) for x in re.findall(r"\d[\d,]{3,}", label)]
+            mn = mx = None
+            if "上限" in label and "最低" in label and len(nums) >= 2:
+                mx, mn = nums[0], nums[1]
+            elif "以下" in label and len(nums) >= 2:
+                mn, mx = nums[0], nums[1] - 1
+            elif nums:
+                mn = nums[0]
+            if not cur:
+                continue
+            for ten, cell in zip(tenors, cells[-n:]):
+                out.append(offer("icbcasia", cur, ten, rate(cell), min_amount=mn, max_amount=mx,
+                                 new_customer=new_customer, new_funds="新資金" in page[:1500] and branch,
+                                 tier=row_tier, channel="分行" if branch else "網上／手機銀行", text=note))
+    return out
+
+
+def bea(text):
+    """BEA board rates (港元 + 外幣 pages): per-currency tables, first column = minimum amount."""
+    out = []
+    for page in pages(text):
+        tenors, cur = None, None
+        for line in page.splitlines():
+            cells = [c.strip() for c in line.split("\t") if c.strip()]
+            if not cells:
+                continue
+            if "戶口種類" in cells[0] or cells[0] == "貨幣":
+                tenors = None
+                continue
+            if all(tenor(c) or "隔夜" in c or "通知" in c for c in cells) and any(tenor(c) for c in cells):
+                tenors = [tenor(c) for c in cells]
+                continue
+            if len(cells) == 1 and currency(cells[0]):
+                cur = currency(cells[0])
+                continue
+            if tenors is None:
+                continue
+            if currency(cells[0]):
+                cur, cells = currency(cells[0]), cells[1:]
+            if cells and cells[0] == "存款":
+                cells = cells[1:]
+            if not cells or not re.fullmatch(r"[\d,]+", cells[0]) or len(cells) - 1 != len(tenors) or not cur:
+                continue
+            mn = int(cells[0].replace(",", ""))
+            for ten, cell in zip(tenors, cells[1:]):
+                v = rate(cell)
+                if ten and v:
+                    out.append(offer("bea", cur, ten, v, min_amount=mn, board=True, text="牌價"))
     return out
 
 
@@ -403,4 +529,5 @@ PARSERS = {
     "publicbank": publicbank, "antbank": antbank, "paob": paob, "welab": welab,
     "mox": mox, "fubon": fubon, "chbank": chbank, "za": za, "ccba": ccba,
     "hsbc": hsbc, "citi": citi, "shacom": shacom, "dbs": headline_only,
+    "icbcasia": icbcasia, "bea": bea,
 }

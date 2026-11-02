@@ -11,9 +11,9 @@ BANKS = [
     ("fubon", "富邦銀行", "富邦", "traditional", "#00897B", "https://www.fubonbank.com.hk/tc/rates-enquiry.html", "browser", "fubon"),
     ("chbank", "創興銀行", "創興", "traditional", "#6A1B9A", "https://www.chbank.com/tc/personal/banking-services/useful-information/deposit-rates/index.shtml", "browser", "chbank"),
     ("citi", "花旗銀行", "花旗", "traditional", "#1976D2", "https://www.citibank.com.hk/chinese/info/rates.html", "browser", "citi"),
-    ("bea", "東亞銀行", "東亞", "traditional", "#C62828", "https://www.hkbea.com/html/tc/bea-personal-banking-deposits-time-deposit.html", "browser", None),
+    ("bea", "東亞銀行", "東亞", "traditional", "#C62828", "https://www.hkbea.com/hk-form/?formId=RATE&rateType=hkddr&language=tc#/forms/MISC", "browser", "bea"),
     ("dahsing", "大新銀行", "大新", "traditional", "#E65100", "https://www.dahsing.com/html/tc/deposit/fixed_deposit/target_savings_deposit.html", "browser", None),
-    ("icbcasia", "工銀亞洲", "工銀", "traditional", "#B71C1C", "https://www.icbcasia.com/hk/tc/personal/deposit/time-deposit/default.html", "browser", None),
+    ("icbcasia", "工銀亞洲", "工銀", "traditional", "#B71C1C", "https://www.icbcasia.com/hk/tc/personal/latest-promotion/online-time-deposit.html", "browser", "icbcasia"),
     ("cncbi", "中信銀行（國際）", "中信", "traditional", "#C2185B", "https://www.cncbinternational.com/personal/deposits/time-deposit/tc/index.jsp", "browser", None),
     ("ocbc", "華僑銀行", "華僑", "traditional", "#D84315", "https://www.ocbc.com.hk/webpages/tc/personal/deposit/time_deposit.html", "browser", None),
     ("shacom", "上海商業銀行", "上商", "traditional", "#283593", "https://www.shacombank.com.hk/tch/personal/promotion/fix-rate.jsp", "browser", "shacom"),
@@ -27,8 +27,15 @@ BANKS = [
     ("airstar", "天星銀行", "天星", "virtual", "#5E35B1", "https://www.airstarbank.com/zh-hk/deposit.html", "browser", None),
     ("fusion", "富融銀行", "富融", "virtual", "#00695C", "https://www.fusionbank.com/deposit.html?lang=tc", "browser", None),
 ]
+# Extra official pages fetched with the same method and appended to the main page text.
+EXTRA_URLS = {
+    "ccba": ["https://www.asia.ccb.com/hongkong_tc/personal/accounts/promotions/newfundtd/index.html"],
+    "icbcasia": ["https://www.icbcasia.com/hk/tc/personal/latest-promotion/new-funds-time-deposit.html",
+                 "https://www.icbcasia.com/hk/tc/personal/latest-promotion/hkd-new-funds-time-deposit.html"],
+    "bea": ["https://www.hkbea.com/hk-form/?formId=RATE&rateType=fcdr&language=tc#/forms/MISC"],
+}
 FIELDS = ("id", "name_zh", "short", "kind", "color", "url", "method", "parser")
 
 
 def banks():
-    return [dict(zip(FIELDS, b)) for b in BANKS]
+    return [dict(zip(FIELDS, b), extra=EXTRA_URLS.get(b[0], [])) for b in BANKS]

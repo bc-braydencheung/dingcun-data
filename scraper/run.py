@@ -74,11 +74,33 @@ def fetch_browser(urls):
     return asyncio.run(main())
 
 
-def fetch_hibor():
+def join_pages(main, extra):
+    """Main page decides success; extra pages are appended when they loaded."""
+    if not isinstance(main, str):
+        return main
+    return f"\n{parsers.PAGE_SEP}\n".join([main] + [t for t in extra if isinstance(t, str)])
+
+
+def hkma_records(url):
+    """HKMA's gateway sometimes answers 405 to one query form; try a few, newest first."""
     import requests
-    r = requests.get(HIBOR_URL, timeout=30)
-    r.raise_for_status()
-    recs = r.json()["result"]["records"]
+    base = url.split("?")[0]
+    key = "end_of_date" if "daily-monetary" in base else "end_of_day"
+    last = None
+    for q in (url, f"{base}?pagesize=5&sortby={key}&sortorder=desc", base):
+        for attempt in range(2):
+            try:
+                r = requests.get(q, timeout=30)
+                r.raise_for_status()
+                recs = r.json()["result"]["records"]
+                return sorted(recs, key=lambda x: x.get(key) or "", reverse=True)
+            except Exception as e:  # noqa: BLE001
+                last = e
+    raise last
+
+
+def fetch_hibor():
+    recs = hkma_records(HIBOR_URL)
     for rec in recs:
         vals = {k: rec.get(k) for k in ("ir_overnight", "ir_1w", "ir_1m", "ir_3m", "ir_6m", "ir_12m")}
         if all(isinstance(v, (int, float)) for v in vals.values()):
@@ -88,11 +110,8 @@ def fetch_hibor():
 
 def merge_daily_hibor(h):
     """Overlay HKMA daily overnight / 1M fixing when newer than the monthly-bulletin record."""
-    import requests
     try:
-        r = requests.get(HIBOR_DAILY_URL, timeout=30)
-        r.raise_for_status()
-        recs = r.json()["result"]["records"]
+        recs = hkma_records(HIBOR_DAILY_URL)
     except Exception as e:  # monthly data is still valid on its own
         print("daily HIBOR failed:", e, file=sys.stderr)
         return h
@@ -189,15 +208,17 @@ def main():
             if os.path.exists(p):
                 texts[b["id"]] = open(p, encoding="utf-8").read()
     else:
-        br = {b["url"]: b["id"] for b in bl if b["parser"] and b["method"] == "browser"}
-        for url, t in fetch_browser(list(br)).items():
-            texts[br[url]] = t
-        for b in bl:
-            if b["parser"] and b["method"] == "static":
-                try:
-                    texts[b["id"]] = fetch_static(b["url"])
-                except Exception as e:  # noqa: BLE001
-                    texts[b["id"]] = e
+        live = [b for b in bl if b["parser"]]
+        br = [u for b in live if b["method"] == "browser" for u in [b["url"], *b["extra"]]]
+        got = fetch_browser(br)
+        for b in live:
+            for u in [b["url"], *b["extra"]]:
+                if b["method"] == "static":
+                    try:
+                        got[u] = fetch_static(u)
+                    except Exception as e:  # noqa: BLE001
+                        got[u] = e
+            texts[b["id"]] = join_pages(got.get(b["url"]), [got.get(u) for u in b["extra"]])
     offers, status = build(bl, texts, previous, fetched_at)
     try:
         hibor = fetch_hibor()
