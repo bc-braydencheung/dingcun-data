@@ -170,6 +170,14 @@ def promo_end(text):
     return max(ds) if ds else None
 
 
+def page_promo_end(text):
+    """The page's 推廣期／優惠期 end date, only when the page states exactly one (else unknown)."""
+    import re
+    ds = {f"{y}-{int(m):02d}-{int(d):02d}" for y, m, d in re.findall(
+        r"(?:推廣期|優惠期|由即日起)[^。\n]{0,40}?至\s*(20\d\d)\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日", text)}
+    return ds.pop() if len(ds) == 1 else None
+
+
 def build(bank_list, texts, previous, fetched_at):
     """Pure merge step (tested): parse texts, fall back to previous offers."""
     prev_offers = {}
@@ -216,6 +224,8 @@ def build(bank_list, texts, previous, fetched_at):
             page = o.pop("page", 0)
             o["source_url"] = urls[page] if page < len(urls) else b["url"]
             o["promo_end"] = o.get("promo_end") or promo_end(o.get("conditions_text_zh") or "")
+            if not o["promo_end"] and not o["conditions"]["board"]:
+                o["promo_end"] = page_promo_end(parsers.pages(text)[page] if page < len(parsers.pages(text)) else "")
         parsed = len(got)
         got = [o for o in got if live(o)]
         if parsed and not got:

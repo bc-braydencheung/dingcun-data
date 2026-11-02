@@ -30,6 +30,7 @@ BANKS = [
 # Extra official pages fetched with the same method and appended to the main page text.
 EXTRA_URLS = {
     "dbs": ["https://www.dbs.com.hk/personal-zh/promotion/OnlineTD-promo"],
+    "sc": ["https://www.sc.com/hk/zh/deposits/board-rates/"],
     "dahsing": [
         "https://www.dahsing.com/html/tc/deposit/fixed_deposit/hkd_fixed_deposit.html",
     ],
