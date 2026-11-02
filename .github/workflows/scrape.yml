@@ -26,3 +26,5 @@ jobs:
           git add data
           git diff --cached --quiet || git commit -m "data: $(date -u +%Y-%m-%dT%H:%MZ)"
           git push
+      - name: health check (fails → GitHub emails you)
+        run: python scraper/health.py
