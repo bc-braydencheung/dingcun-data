@@ -75,10 +75,10 @@ def fetch_browser(urls):
 
 
 def join_pages(main, extra):
-    """Main page decides success; extra pages are appended when they loaded."""
+    """Main page decides success; a failed extra page stays as an empty slot so page n keeps URL n."""
     if not isinstance(main, str):
         return main
-    return f"\n{parsers.PAGE_SEP}\n".join([main] + [t for t in extra if isinstance(t, str)])
+    return f"\n{parsers.PAGE_SEP}\n".join([main] + [t if isinstance(t, str) else "" for t in extra])
 
 
 def hkma_records(url):
@@ -165,6 +165,11 @@ def build(bank_list, texts, previous, fetched_at):
         prev_offers.setdefault(o["bank_id"], []).append(o)
     prev_status = {s["bank_id"]: s for s in (previous or {}).get("bank_status", [])}
     offers, status = [], []
+    today = fetched_at[:10]
+
+    def live(o):
+        return not o.get("promo_end") or o["promo_end"] >= today
+
     for b in bank_list:
         bid = b["id"]
         st = {"bank_id": bid, "status": "unsupported", "offer_count": 0,
@@ -194,17 +199,26 @@ def build(bank_list, texts, previous, fetched_at):
             st.update(status="headline", error="網頁只寫「高達」利率，冇分年期表")
             status.append(st)
             continue
+        urls = [b["url"], *b.get("extra", [])]
+        for o in got:
+            page = o.pop("page", 0)
+            o["source_url"] = urls[page] if page < len(urls) else b["url"]
+            o["promo_end"] = o.get("promo_end") or promo_end(o.get("conditions_text_zh") or "")
+        parsed = len(got)
+        got = [o for o in got if live(o)]
+        if parsed and not got:
+            st.update(status="ok", offer_count=0, last_ok=fetched_at, error="所有推廣已過截止日")
+            status.append(st)
+            continue
         if got:
             for i, o in enumerate(got):
                 o["id"] = f"{bid}-{i}"
-                o["source_url"] = b["url"]
                 o["fetched_at"] = fetched_at
                 o["status"] = "ok"
-                o["promo_end"] = o.get("promo_end") or promo_end(o.get("conditions_text_zh") or "")
             offers += got
             st.update(status="ok", offer_count=len(got), last_ok=fetched_at, error=err)
-        elif prev_offers.get(bid):
-            old = [dict(o, status="stale") for o in prev_offers[bid]]
+        elif [o for o in prev_offers.get(bid, []) if live(o)]:
+            old = [dict(o, status="stale") for o in prev_offers[bid] if live(o)]
             offers += old
             st.update(status="stale", offer_count=len(old), error=err or "0 offers parsed")
         else:

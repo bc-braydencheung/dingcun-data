@@ -168,3 +168,26 @@ def test_parse_hkab():
          "year": 2026, "month": 11, "day": 2, "date": "2026-11-2", "time": "11:15am", "isHoliday": False}
     h = parse_hkab(j)
     assert h["date"] == "2026-11-02" and h["ir_3m"] == 3.20548 and h["source"] == "HKAB"
+
+
+def test_expired_promos_dropped_and_extra_pages_keep_their_url():
+    bl = [b for b in banks() if b["id"] == "icbcasia"]
+    t = fx("icbcasia")
+    before, _ = build(bl, {"icbcasia": t}, None, "2026-10-31T08:30:00+08:00")
+    after, st = build(bl, {"icbcasia": t}, None, "2026-11-02T08:30:00+08:00")
+    gone = [o for o in before if o["promo_end"] == "2026-10-31"]
+    assert gone and len(after) == len(before) - len(gone)
+    assert not find(after, "HKD", 3, new_customer=True)
+    stale, _ = build(bl, {"icbcasia": RuntimeError("x")}, {"offers": before}, "2026-11-02T08:30:00+08:00")
+    assert len(stale) == len(after) and all(o["status"] == "stale" for o in stale)
+    urls = [bl[0]["url"], *bl[0]["extra"]]
+    assert {o["source_url"] for o in before} == set(urls)
+    assert all("page" not in o for o in before)
+    d98 = [o for o in after if o["tenor_days"] == 98]
+    assert d98 and all(o["source_url"] == urls[1] for o in d98)
+
+
+def test_failed_extra_page_keeps_slot():
+    from run import join_pages
+    j = join_pages("main", [RuntimeError("x"), "second"])
+    assert parsers.pages(j)[2].strip() == "second"
