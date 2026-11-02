@@ -159,3 +159,12 @@ def test_join_pages_keeps_main_failure():
     e = RuntimeError("x")
     assert join_pages(e, ["a"]) is e
     assert parsers.PAGE_SEP in join_pages("main", ["extra", e])
+
+
+def test_parse_hkab():
+    from run import parse_hkab
+    j = {"Overnight": 2.45048, "1 Week": 2.47512, "2 Weeks": 2.53101, "1 Month": 2.6775,
+         "2 Months": 3.04786, "3 Months": 3.20548, "6 Months": 3.43411, "12 Months": 3.91964,
+         "year": 2026, "month": 11, "day": 2, "date": "2026-11-2", "time": "11:15am", "isHoliday": False}
+    h = parse_hkab(j)
+    assert h["date"] == "2026-11-02" and h["ir_3m"] == 3.20548 and h["source"] == "HKAB"

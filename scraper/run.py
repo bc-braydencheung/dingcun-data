@@ -99,7 +99,28 @@ def hkma_records(url):
     raise last
 
 
+HKAB_URL = "https://www.hkab.org.hk/api/hibor"
+
+
+def parse_hkab(j):
+    """HKAB's official daily HIBOR fixing (published ~11:15am each business day)."""
+    keys = {"ir_overnight": "Overnight", "ir_1w": "1 Week", "ir_1m": "1 Month",
+            "ir_3m": "3 Months", "ir_6m": "6 Months", "ir_12m": "12 Months"}
+    vals = {k: j.get(v) for k, v in keys.items()}
+    if not all(isinstance(v, (int, float)) for v in vals.values()):
+        raise ValueError("incomplete HKAB fixing")
+    date = f"{int(j['year']):04d}-{int(j['month']):02d}-{int(j['day']):02d}"
+    return {"date": date, **vals, "source": "HKAB"}
+
+
 def fetch_hibor():
+    import requests
+    try:
+        r = requests.get(HKAB_URL, timeout=30, headers={"User-Agent": UA})
+        r.raise_for_status()
+        return parse_hkab(r.json())
+    except Exception as e:  # noqa: BLE001
+        print("HKAB HIBOR failed, trying HKMA:", e, file=sys.stderr)
     recs = hkma_records(HIBOR_URL)
     for rec in recs:
         vals = {k: rec.get(k) for k in ("ir_overnight", "ir_1w", "ir_1m", "ir_3m", "ir_6m", "ir_12m")}
