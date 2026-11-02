@@ -70,6 +70,12 @@ def hangseng(text):
 
 
 def sc(text):
+    """渣打: 網上新資金定存 promo (main page) + 存款利率 board page (extra) with every currency's 定期 table."""
+    ps = pages(text)
+    return on_page(_sc_promo(ps[0]), 0) + [o for i, p in enumerate(ps[1:], 1) for o in on_page(_sc_board(p), i)]
+
+
+def _sc_promo(text):
     out = []
     note = snippet(text, "由即日起至")
     promo = re.search(r"至(\d{4})年(\d{1,2})月(\d{1,2})日", note)
@@ -94,6 +100,34 @@ def sc(text):
             o["promo_end"] = end
             out.append(o)
             pending = None
+    return out
+
+
+def _sc_board(text):
+    """Sections 「<貨幣>存款利率」; header cells of the 定期存款年利率 table are amount bands split by tabs."""
+    out = []
+    parts = re.split(r"\n(\S+?)存款利率\n", "\n" + text)
+    for name, body in zip(parts[1::2], parts[2::2]):
+        cur = currency(name)
+        i = body.find("定期存款年利率")
+        if not cur or i < 0:
+            continue
+        lines = body[i:].splitlines()
+        first = next((k for k, l in enumerate(lines) if "\t" in l and tenor(l.split("\t")[0])), None)
+        if first is None:
+            continue
+        head = "\n".join(lines[1:first]).split("存款期", 1)[-1]
+        bands = [_hkd_band(re.sub(r"\s+", "", c)) for c in head.split("\t") if c.strip()]
+        for l in lines[first:]:
+            cells = [c.strip() for c in l.split("\t")]
+            ten = tenor(cells[0])
+            if not ten or len(cells) != len(bands) + 1:
+                break
+            for (lo, hi), cell in zip(bands, cells[1:]):
+                v = rate(cell)
+                if v:
+                    out.append(offer("sc", cur, ten, v, min_amount=lo, max_amount=hi, board=True,
+                                     text="渣打存款利率頁嘅定期存款牌價（唔使新資金）"))
     return out
 
 

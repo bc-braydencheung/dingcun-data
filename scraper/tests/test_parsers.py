@@ -62,8 +62,8 @@ def test_parser_fixture(bank):
 
 
 def test_condition_flags():
-    sc = parsers.sc(fx("sc"))
-    assert all(o["conditions"]["new_funds"] for o in sc)
+    sc = [o for o in parsers.sc(fx("sc")) if not o["conditions"]["board"]]
+    assert sc and all(o["conditions"]["new_funds"] for o in sc)
     assert sc[0]["min_amount"] == 10000 and sc[0]["promo_end"]
     za = parsers.za(fx("za"))
     assert all(o["conditions"]["fx_conversion"] for o in za)
@@ -261,3 +261,34 @@ def test_big_shrink_keeps_previous_as_stale():
     finally:
         P.PARSERS["fubon"] = orig
     assert s2[0]["status"] == "stale" and "只抽到 4 條" in s2[0]["error"] and len(o2) == len(offers)
+
+
+def test_sc_board_page():
+    got = parsers.sc(fx("sc"))
+    board = [o for o in got if o["conditions"]["board"]]
+    assert {o["page"] for o in board} == {1}
+    hkd3 = find(board, "HKD", 3)
+    assert len(hkd3) == 7 and hkd3[0]["rate_pa"] == 0.125
+    assert (hkd3[0]["min_amount"], hkd3[0]["max_amount"]) == (10000, 29999)
+    assert hkd3[-1]["min_amount"] == 5000000 and hkd3[-1]["max_amount"] is None
+    assert find(board, "USD", 12)[0]["rate_pa"] == 0.60
+    assert not any(o["conditions"]["new_funds"] for o in board)
+
+
+def test_page_promo_end():
+    from run import page_promo_end
+    assert page_promo_end("推廣期：2026年11月2日至2026年11月30日（包括首尾") == "2026-11-30"
+    assert page_promo_end("推廣期由2026年10月1日至2026年12月31日 ... 優惠期至2027年1月31日") is None
+    assert page_promo_end("截至2023年11月20日就本港") is None
+
+
+def test_build_fills_promo_end_from_page():
+    b = dict(id="x", url="u", parser="x", extra=[])
+    parsers.PARSERS["x"] = lambda t: [offer("x", "HKD", (3, None), 3.0, new_funds=True),
+                                      offer("x", "HKD", (3, None), 0.1, board=True)]
+    try:
+        out, _ = build([b], {"x": "推廣期：2026年11月2日至2026年11月30日"}, None, "2026-11-03T08:40:00+08:00")
+    finally:
+        del parsers.PARSERS["x"]
+    ends = {o["conditions"]["board"]: o["promo_end"] for o in out}
+    assert ends == {False: "2026-11-30", True: None}
