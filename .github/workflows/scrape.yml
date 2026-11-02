@@ -1,8 +1,9 @@
 name: scrape
 on:
   schedule:
-    - cron: "30 0 * * *"
-    - cron: "30 9 * * *"
+    - cron: "17 0 * * *"
+    - cron: "47 4 * * *"
+    - cron: "23 9 * * *"
   workflow_dispatch:
 permissions:
   contents: write
