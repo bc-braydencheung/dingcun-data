@@ -292,3 +292,37 @@ def test_build_fills_promo_end_from_page():
         del parsers.PARSERS["x"]
     ends = {o["conditions"]["board"]: o["promo_end"] for o in out}
     assert ends == {False: "2026-11-30", True: None}
+
+
+def test_promo_log_tracks_first_seen_and_end():
+    from run import update_promo_log, promo_key
+
+    def o(bank, rate, board=False, st="ok"):
+        c = {"new_funds": True, "new_customer": False, "up_to": False, "board": board}
+        return {"bank_id": bank, "currency": "HKD", "tenor_months": 3, "tenor_days": None,
+                "rate_pa": rate, "min_amount": 10000, "conditions": c, "status": st}
+
+    ok = [{"bank_id": b, "status": "ok"} for b in ("a", "b")]
+    k = promo_key("a", "HKD", 3, None, 3.5, 10000, 1, 0)
+    hist = [("2026-11-01", {k}, {"a"}), ("2026-11-02", set(), {"a"}),
+            ("2026-11-03", {k}, {"a"}), ("2026-11-04", {k}, {"a"})]
+    day1 = [o("a", 3.5), o("b", 3.0), o("b", 1.0, board=True)]
+    log = update_promo_log(None, day1, ok, "2026-11-05", hist)
+    assert day1[0]["first_seen"] == "2026-11-03"  # latest unbroken run only
+    assert day1[1]["first_seen"] == "2026-11-05"
+    assert "first_seen" not in day1[2] and len(log["promos"]) == 2
+    # a's promo vanishes while a scrapes ok → ended; b goes stale → not ended
+    day2 = [o("a", 3.6), o("b", 3.0, st="stale")]
+    log = update_promo_log(log, day2, [ok[0], {"bank_id": "b", "status": "stale"}], "2026-11-06")
+    by = {e["k"]: e for e in log["promos"]}
+    assert by[k]["ended"] == "2026-11-06" and by[k]["last_seen"] == "2026-11-05"
+    assert by[promo_key("b", "HKD", 3, None, 3.0, 10000, 1, 0)]["ended"] is None
+    # comes back → reopened, first_seen kept
+    log = update_promo_log(log, [o("a", 3.5)], ok, "2026-11-07")
+    e = {e["k"]: e for e in log["promos"]}[k]
+    assert e["ended"] is None and e["first_seen"] == "2026-11-03"
+    # pruned 180 days after ending
+    log = update_promo_log(log, [], ok, "2027-01-01")
+    assert all(e["ended"] for e in log["promos"])
+    assert len(update_promo_log(log, [], ok, "2027-06-30")["promos"]) == 1
+    assert update_promo_log(log, [], ok, "2027-07-01")["promos"] == []
