@@ -306,10 +306,10 @@ def test_promo_log_tracks_first_seen_and_end():
     k = promo_key("a", "HKD", 3, None, 3.5, 10000, 1, 0)
     hist = [("2026-11-01", {k}, {"a"}), ("2026-11-02", set(), {"a"}),
             ("2026-11-03", {k}, {"a"}), ("2026-11-04", {k}, {"a"})]
-    day1 = [o("a", 3.5), o("b", 3.0), o("b", 1.0, board=True)]
+    day1 = [o("a", 3.5), o("b", 3.0), o("b", 1.0, board=True), o("b", 3.0)]
     log = update_promo_log(None, day1, ok, "2026-11-05", hist)
     assert day1[0]["first_seen"] == "2026-11-03"  # latest unbroken run only
-    assert day1[1]["first_seen"] == "2026-11-05"
+    assert day1[1]["first_seen"] == day1[3]["first_seen"] == "2026-11-05"
     assert "first_seen" not in day1[2] and len(log["promos"]) == 2
     # a's promo vanishes while a scrapes ok → ended; b goes stale → not ended
     day2 = [o("a", 3.6), o("b", 3.0, st="stale")]

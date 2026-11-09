@@ -308,7 +308,8 @@ def update_promo_log(log, offers, status, day, history_days=()):
 
     Sets o["first_seen"] on today's ok offers. Ended entries are kept 180 days."""
     ok_banks = {s["bank_id"] for s in status if s["status"] == "ok"}
-    live = {_offer_key(o): o for o in offers if o["status"] == "ok" and not o["conditions"]["board"]}
+    todays = [o for o in offers if o["status"] == "ok" and not o["conditions"]["board"]]
+    live = {_offer_key(o): o for o in todays}
     ent = {e["k"]: e for e in (log or {}).get("promos", [])}
     for k, o in live.items():
         e = ent.get(k)
@@ -322,7 +323,8 @@ def update_promo_log(log, offers, status, day, history_days=()):
                 "first_seen": first_seen_from_history(k, o["bank_id"], history_days) or day,
             }
         e["last_seen"], e["ended"] = day, None
-        o["first_seen"] = e["first_seen"]
+    for o in todays:  # same key can appear twice (e.g. different channel/tier text)
+        o["first_seen"] = ent[_offer_key(o)]["first_seen"]
     for k, e in ent.items():
         if k not in live and e.get("ended") is None and e["bank_id"] in ok_banks:
             e["ended"] = day
