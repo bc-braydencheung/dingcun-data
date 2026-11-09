@@ -282,6 +282,73 @@ def health(status, offers, hibor, previous, fetched_at):
                          for s in status if s["status"] in ("stale", "error")]}
 
 
+def promo_key(bank, cur, tm, td, rate, mn, nf, nc):
+    return f"{bank}|{cur}|{tm}|{td}|{rate}|{mn}|{int(nf)}|{int(nc)}"
+
+
+def _offer_key(o):
+    c = o["conditions"]
+    return promo_key(o["bank_id"], o["currency"], o["tenor_months"], o["tenor_days"],
+                     o["rate_pa"], o["min_amount"], c["new_funds"], c["new_customer"])
+
+
+def first_seen_from_history(key, bank, days):
+    """Start of the latest unbroken run of `key` in daily snapshots (days = [(date, {keys}, {banks})], oldest first)."""
+    seen = None
+    for day, keys, banks_ in reversed(days):
+        if key in keys:
+            seen = day
+        elif bank in banks_:
+            break
+    return seen
+
+
+def update_promo_log(log, offers, status, day, history_days=()):
+    """Track every non-牌價 offer: first_seen / last_seen / ended (day it vanished while its bank scraped ok).
+
+    Sets o["first_seen"] on today's ok offers. Ended entries are kept 180 days."""
+    ok_banks = {s["bank_id"] for s in status if s["status"] == "ok"}
+    todays = [o for o in offers if o["status"] == "ok" and not o["conditions"]["board"]]
+    live = {_offer_key(o): o for o in todays}
+    ent = {e["k"]: e for e in (log or {}).get("promos", [])}
+    for k, o in live.items():
+        e = ent.get(k)
+        if e is None:
+            e = ent[k] = {
+                "k": k, "bank_id": o["bank_id"], "currency": o["currency"],
+                "tenor_months": o["tenor_months"], "tenor_days": o["tenor_days"],
+                "rate_pa": o["rate_pa"], "min_amount": o["min_amount"],
+                "new_funds": o["conditions"]["new_funds"], "new_customer": o["conditions"]["new_customer"],
+                "up_to": o["conditions"]["up_to"],
+                "first_seen": first_seen_from_history(k, o["bank_id"], history_days) or day,
+            }
+        e["last_seen"], e["ended"] = day, None
+    for o in todays:  # same key can appear twice (e.g. different channel/tier text)
+        o["first_seen"] = ent[_offer_key(o)]["first_seen"]
+    for k, e in ent.items():
+        if k not in live and e.get("ended") is None and e["bank_id"] in ok_banks:
+            e["ended"] = day
+    cutoff = (dt.date.fromisoformat(day) - dt.timedelta(days=180)).isoformat()
+    keep = [e for e in ent.values() if not e.get("ended") or e["ended"] >= cutoff]
+    keep.sort(key=lambda e: (e.get("ended") or "9999", e["k"]))
+    return {"updated": day, "promos": keep}
+
+
+def load_history_days(hdir):
+    out = []
+    if not os.path.isdir(hdir):
+        return out
+    for f in sorted(os.listdir(hdir)):
+        if not f.endswith(".json"):
+            continue
+        try:
+            rows = json.load(open(os.path.join(hdir, f), encoding="utf-8"))["offers"]
+        except Exception:  # noqa: BLE001
+            continue
+        out.append((f[:-5], {promo_key(*r) for r in rows}, {r[0] for r in rows}))
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--fixtures", action="store_true")
@@ -315,6 +382,10 @@ def main():
     except Exception as e:  # noqa: BLE001
         print("HIBOR failed:", e, file=sys.stderr)
         hibor = (previous or {}).get("hibor")
+    day = fetched_at[:10]
+    log_path = os.path.join(a.out, "promo_log.json")
+    log = json.load(open(log_path, encoding="utf-8")) if os.path.exists(log_path) else None
+    log = update_promo_log(log, offers, status, day, load_history_days(os.path.join(a.out, "history")))
     meta = [{k: b[k] for k in ("id", "name_zh", "short", "kind", "color", "url")} for b in bl]
     doc = {"schema": 1, "generated_at": fetched_at, "hibor": hibor, "banks": meta,
            "offers": offers, "bank_status": status}
@@ -323,7 +394,8 @@ def main():
         json.dump(doc, f, ensure_ascii=False, indent=1)
     with open(os.path.join(a.out, "health.json"), "w", encoding="utf-8") as f:
         json.dump(health(status, offers, hibor, previous, fetched_at), f, ensure_ascii=False, indent=1)
-    day = fetched_at[:10]
+    with open(log_path, "w", encoding="utf-8") as f:
+        json.dump(log, f, ensure_ascii=False, separators=(",", ":"))
     hist = {"date": day, "hibor": hibor, "offers": [
         [o["bank_id"], o["currency"], o["tenor_months"], o["tenor_days"], o["rate_pa"],
          o["min_amount"], int(o["conditions"]["new_funds"]), int(o["conditions"]["new_customer"])]
