@@ -30,6 +30,16 @@ def now_iso():
     return dt.datetime.now(HKT).replace(microsecond=0).isoformat()
 
 
+def fetch_pdf(url):
+    import io
+
+    import requests
+    from pypdf import PdfReader
+    r = requests.get(url, headers={"User-Agent": UA}, timeout=40)
+    r.raise_for_status()
+    return "\n".join(p.extract_text() or "" for p in PdfReader(io.BytesIO(r.content)).pages)
+
+
 def fetch_static(url):
     import requests
     from bs4 import BeautifulSoup
@@ -165,9 +175,15 @@ def apply_daily_hibor(h, recs):
 def promo_end(text):
     """Latest '至2026年12月31日' / '至2026-12-31' style end date in the condition text."""
     import re
-    ds = [f"{y}-{int(m):02d}-{int(d):02d}" for y, m, d in
-          re.findall(r"(?:至|截至|到)\s*(20\d\d)\s*[年/-]\s*(\d{1,2})\s*[月/-]\s*(\d{1,2})", text)]
-    return max(ds) if ds else None
+    ymd = r"(20\d\d)\s*[年/-]\s*(\d{1,2})\s*[月/-]\s*(\d{1,2})"
+    ds = re.findall(r"(?:至|截至|到|直至)\s*" + ymd, text)
+    ds += re.findall(ymd + r"\s*日?\s*(?:或之前|止)", text)
+    ds += [(y, m, d) for d, m, y in re.findall(r"(?:至|截至|直至)\s*(\d{1,2})/(\d{1,2})/(20\d\d)", text)]
+    # 「2026年11月1日至12月31日」：結束日冇寫年份，跟返開始年份
+    for y, m0, m, d in re.findall(r"(20\d\d)\s*年\s*(\d{1,2})\s*月\s*\d{1,2}\s*日\s*(?:起)?\s*至\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日", text):
+        ds.append((str(int(y) + (int(m) < int(m0))), m, d))
+    out = [f"{y}-{int(m):02d}-{int(d):02d}" for y, m, d in ds if 1 <= int(m) <= 12 and 1 <= int(d) <= 31]
+    return max(out) if out else None
 
 
 def page_promo_end(text):
@@ -370,9 +386,9 @@ def main():
         got = fetch_browser(br, {u for b in live if b.get("reveal") for u in [b["url"], *b["extra"]]})
         for b in live:
             for u in [b["url"], *b["extra"]]:
-                if b["method"] == "static":
+                if b["method"] in ("static", "pdf"):
                     try:
-                        got[u] = fetch_static(u)
+                        got[u] = (fetch_pdf if b["method"] == "pdf" else fetch_static)(u)
                     except Exception as e:  # noqa: BLE001
                         got[u] = e
             texts[b["id"]] = join_pages(got.get(b["url"]), [got.get(u) for u in b["extra"]])
