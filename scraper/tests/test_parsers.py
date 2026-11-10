@@ -137,6 +137,11 @@ def test_promo_end_extraction():
     assert promo_end("優惠由2026年10月1日起至2026年12月31日止") == "2026-12-31"
     assert promo_end("推廣期至2026/11/30") == "2026-11-30"
     assert promo_end("由2026年10月21日起") is None
+    assert promo_end("須於2026年12月15日或之前開立") == "2026-12-15"
+    assert promo_end("優惠期直至2027年1月31日") == "2027-01-31"
+    assert promo_end("推廣期：2026年11月1日至12月31日") == "2026-12-31"
+    assert promo_end("優惠至31/12/2026") == "2026-12-31"
+    assert promo_end("2025年8月1日更新") is None
 
 
 def test_icbcasia_tiers_and_promos():
@@ -326,3 +331,15 @@ def test_promo_log_tracks_first_seen_and_end():
     assert all(e["ended"] for e in log["promos"])
     assert len(update_promo_log(log, [], ok, "2027-06-30")["promos"]) == 1
     assert update_promo_log(log, [], ok, "2027-07-01")["promos"] == []
+
+
+def test_ocbc_pdf_tiers_up_to():
+    got = parsers.ocbc(fx("ocbc"))
+    assert {o["currency"] for o in got} == {"HKD", "USD"}
+    assert all(o["conditions"]["up_to"] and o["conditions"]["new_funds"] for o in got)
+    hk12 = {o["conditions"]["tier"]: o for o in find(got, "HKD", 12)}
+    assert hk12["宏富理財私人客戶"]["rate_pa"] == 3.5 and hk12["個人客戶"]["rate_pa"] == 3.3
+    assert hk12["個人客戶"]["min_amount"] == 500000 and hk12["宏富理財客戶"]["min_amount"] == 100000
+    assert sum(o["currency"] == "HKD" for o in got) == 15 and sum(o["currency"] == "USD" for o in got) == 12
+    us12 = {o["conditions"]["tier"]: o for o in find(got, "USD", 12)}
+    assert us12["個人客戶"]["rate_pa"] == 4.2 and us12["個人客戶"]["min_amount"] == 12900

@@ -691,6 +691,39 @@ def airstar(text):
     return out
 
 
+OCBC_TIERS = ("宏富理財私人客戶", "宏富理財客戶", "個人客戶")
+
+
+def ocbc(text):
+    """華僑 定期存款優惠 PDF: 港幣／美元 branch new-funds tables, 3 tiers; every cell is labelled 「特惠年利率(高達)」."""
+    out = []
+    for cur, head in (("HKD", "港幣定期存款優惠指定條款及細則"), ("USD", "美元定期存款優惠指定條款及細則")):
+        i = text.find(head)
+        if i < 0:
+            continue
+        sec = text[i:]
+        j = sec.find("上述特惠年利率優惠名額有限")
+        sec = re.sub(r"\s+", " ", sec[:j if j > 0 else 3000])
+        note = re.sub(r"\s+", " ", sec[:sec.find("詳情如下")]).strip()
+        t = sec.find("1 個月")
+        if t < 0:
+            continue
+        amounts = [int(x.replace(",", "")) for x in re.findall(r"(\d{2,3},\d{3})\s*(?:元)?\s*或以上", sec[t:sec.find("3 個月")])]
+        parts = re.split(r"(\d{1,2})\s*個月", sec[t:])
+        for months, cell in zip(parts[1::2], parts[2::2]):
+            rates = [float(x) for x in re.findall(r"(\d\.\d{1,3})\s*厘", cell)][:3]
+            if len(rates) != 3:
+                continue
+            for k, (tier, r) in enumerate(zip(OCBC_TIERS, rates)):
+                amt = amounts[k] if k < len(amounts) else (amounts[-1] if amounts else 100000)
+                if cur == "USD":
+                    amt = -(-amt * 10 // 78 // 100) * 100  # HK$ 等值 → US$，進位到百位
+                out.append(offer("ocbc", cur, (int(months), None), r, min_amount=amt, new_funds=True,
+                                 tier=tier, channel="分行", up_to=True,
+                                 text=note + "（銀行寫「特惠年利率(高達)」，名額有限，以分行確認為準）"))
+    return out
+
+
 def headline_only(text):
     return []
 
@@ -706,5 +739,5 @@ PARSERS = {
     "publicbank": publicbank, "antbank": antbank, "paob": paob, "welab": welab,
     "mox": mox, "fubon": fubon, "chbank": chbank, "za": za, "ccba": ccba,
     "hsbc": hsbc, "citi": citi, "shacom": shacom, "dbs": dbs, "dahsing": dahsing, "chiyu": chiyu, "airstar": airstar,
-    "icbcasia": icbcasia, "bea": bea,
+    "icbcasia": icbcasia, "bea": bea, "ocbc": ocbc,
 }

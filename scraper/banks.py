@@ -15,7 +15,7 @@ BANKS = [
     ("dahsing", "大新銀行", "大新", "traditional", "#E65100", "https://www.dahsing.com/html/tc/deposit/fixed_deposit/usd_fixed_deposit.html", "browser", "dahsing"),
     ("icbcasia", "工銀亞洲", "工銀", "traditional", "#B71C1C", "https://www.icbcasia.com/hk/tc/personal/latest-promotion/online-time-deposit.html", "browser", "icbcasia"),
     ("cncbi", "中信銀行（國際）", "中信", "traditional", "#C2185B", "https://www.cncbinternational.com/personal/deposits/time-deposit/tc/index.jsp", "browser", None),
-    ("ocbc", "華僑銀行", "華僑", "traditional", "#D84315", "https://www.ocbc.com.hk/webpages/tc/personal/deposit/time_deposit.html", "browser", None),
+    ("ocbc", "華僑銀行", "華僑", "traditional", "#D84315", "https://www.ocbc.com.hk/iwov-resources/hk/ocbc/personal/pdf/HKD.pdf", "pdf", "ocbc"),
     ("shacom", "上海商業銀行", "上商", "traditional", "#283593", "https://www.shacombank.com.hk/tch/personal/promotion/fix-rate.jsp", "browser", "shacom"),
     ("chiyu", "集友銀行", "集友", "traditional", "#2E7D32", "https://www.chiyubank.com/wcs/trading-rate/", "browser", "chiyu"),
     ("za", "ZA Bank", "ZA", "virtual", "#00838F", "https://bank.za.group/hk/deposit", "browser", "za"),
