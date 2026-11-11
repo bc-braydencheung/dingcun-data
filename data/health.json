@@ -1,19 +1,12 @@
 {
- "generated_at": "2026-11-11T20:10:23+08:00",
+ "generated_at": "2026-11-12T01:16:03+08:00",
  "offers": 1402,
- "ok": 22,
- "stale": 1,
+ "ok": 23,
+ "stale": 0,
  "error": 0,
  "headline": 0,
  "unsupported": 2,
  "hibor_date": "2026-11-11",
  "alerts": [],
- "problems": [
-  {
-   "bank_id": "fubon",
-   "status": "stale",
-   "last_ok": "2026-11-11T17:40:37+08:00",
-   "error": "0 offers parsed"
-  }
- ]
+ "problems": []
 }
