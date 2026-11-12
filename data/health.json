@@ -1,12 +1,12 @@
 {
- "generated_at": "2026-11-12T08:40:44+08:00",
- "offers": 1402,
+ "generated_at": "2026-11-12T12:40:50+08:00",
+ "offers": 1401,
  "ok": 23,
  "stale": 0,
  "error": 0,
  "headline": 0,
  "unsupported": 2,
- "hibor_date": "2026-11-11",
+ "hibor_date": "2026-11-12",
  "alerts": [],
  "problems": []
 }
