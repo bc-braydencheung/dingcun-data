@@ -1,12 +1,19 @@
 {
- "generated_at": "2026-11-14T19:45:54+08:00",
+ "generated_at": "2026-11-14T23:53:23+08:00",
  "offers": 1401,
- "ok": 23,
- "stale": 0,
+ "ok": 22,
+ "stale": 1,
  "error": 0,
  "headline": 0,
  "unsupported": 2,
  "hibor_date": "2026-11-13",
  "alerts": [],
- "problems": []
+ "problems": [
+  {
+   "bank_id": "ocbc",
+   "status": "stale",
+   "last_ok": "2026-11-14T19:45:54+08:00",
+   "error": "fetch: HTTPError: 403 Client Error: Forbidden for url: https://www.ocbc.com.hk/iwov-resources/hk/ocbc/personal/pdf/HKD.pdf"
+  }
+ ]
 }
